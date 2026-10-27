@@ -11,13 +11,16 @@ import { TextField } from "@/components/TextField";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, ErrorState } from "@/components/States";
 import { ItemCard, categoryLabel } from "@/features/estimates/ItemCard";
-import { useDraftStore } from "@/features/estimates/draftStore";
+import { PhotoHeader } from "@/features/estimates/PhotoHeader";
+import { useDraftStore, type DraftItem } from "@/features/estimates/draftStore";
 import { useCalculate } from "@/features/estimates/useCalculate";
 import { useRates, useSaveRate } from "@/features/rates/useRates";
 import { useNetwork } from "@/hooks/useNetwork";
 import { sanitizeDecimal } from "@/lib/digits";
 import { errorKey } from "@/lib/errors";
+import { formatRs } from "@/lib/money";
 import { UNKNOWN_CATEGORY } from "@/lib/constants";
+import type { RateType } from "@/api/types";
 import { colors, spacing } from "@/theme/tokens";
 
 export default function Confirm() {
@@ -29,6 +32,7 @@ export default function Confirm() {
   const saveRate = useSaveRate(draft.projectId);
   const calc = useCalculate();
   const [deleteKey, setDeleteKey] = useState<string | null>(null);
+  const [removePhotoKey, setRemovePhotoKey] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
 
   useFocusEffect(
@@ -46,6 +50,42 @@ export default function Confirm() {
     new Set(draft.items.map((i) => i.categoryKey)),
   ).filter((k) => k !== UNKNOWN_CATEGORY);
   const canCalculate = draft.items.length > 0 && isOnline && !calc.isPending;
+
+  const rateFor = (key: string): { value: string; per: RateType } => {
+    const saved = rateList.find((r) => r.categoryKey === key);
+    const o = draft.overrides[key];
+    return {
+      value: o?.value ?? saved?.value ?? "",
+      per: o?.per ?? saved?.per ?? "area",
+    };
+  };
+
+  const photoKeys = new Set(draft.photos.map((p) => p.key));
+  const orphanItems = draft.items.filter(
+    (i) => !i.photoKey || !photoKeys.has(i.photoKey),
+  );
+
+  const renderItems = (items: DraftItem[]) =>
+    items.map((item, idx) => (
+      <ItemCard
+        key={item.key}
+        index={idx}
+        item={item}
+        rates={rateList}
+        highlighted={draft.highlightKeys.includes(item.key)}
+        onChange={(patch) => draft.updateItem(item.key, patch)}
+        onDelete={() => setDeleteKey(item.key)}
+      />
+    ));
+
+  const addPhoto = () =>
+    router.push({
+      pathname: "/estimate/[id]/capture",
+      params: {
+        id: draft.estimateId ?? "add",
+        projectId: draft.projectId ?? "",
+      },
+    });
 
   const calculate = () =>
     calc.mutate(undefined, {
@@ -83,7 +123,7 @@ export default function Confirm() {
         <ErrorState error={rates.error} onRetry={() => rates.refetch()} />
       ) : null}
 
-      {draft.items.length === 0 ? (
+      {draft.photos.length === 0 && draft.items.length === 0 ? (
         <EmptyState
           icon="list-outline"
           title={t("confirm.emptyTitle")}
@@ -91,23 +131,58 @@ export default function Confirm() {
         />
       ) : null}
 
-      {draft.items.map((item, idx) => (
-        <ItemCard
-          key={item.key}
-          index={idx}
-          item={item}
-          rates={rateList}
-          highlighted={draft.highlightKeys.includes(item.key)}
-          onChange={(patch) => draft.updateItem(item.key, patch)}
-          onDelete={() => setDeleteKey(item.key)}
-        />
-      ))}
+      {draft.photos.map((photo, pIdx) => {
+        const rate = rateFor(photo.categoryKey);
+        return (
+          <View key={photo.key} style={{ gap: spacing.md }}>
+            <PhotoHeader
+              index={pIdx}
+              uri={photo.uri}
+              categoryText={categoryLabel(
+                photo.categoryKey,
+                rateList,
+                i18n.language,
+              )}
+              rateText={
+                rate.value
+                  ? `${formatRs(rate.value)} ${t(`result.per.${rate.per}`)}`
+                  : ""
+              }
+              onRemove={() => setRemovePhotoKey(photo.key)}
+            />
+            {renderItems(draft.items.filter((i) => i.photoKey === photo.key))}
+            <Button
+              compact
+              variant="ghost"
+              icon="add"
+              title={t("confirm.addRow")}
+              onPress={() => draft.addItem(photo.key)}
+            />
+          </View>
+        );
+      })}
+
+      {orphanItems.length > 0 ? (
+        <View style={{ gap: spacing.md }}>
+          <AppText variant="title" bold>
+            {t("confirm.otherItems")}
+          </AppText>
+          {renderItems(orphanItems)}
+          <Button
+            compact
+            variant="ghost"
+            icon="add"
+            title={t("confirm.addRow")}
+            onPress={() => draft.addItem(null)}
+          />
+        </View>
+      ) : null}
 
       <Button
         variant="secondary"
-        icon="add"
-        title={t("confirm.addRow")}
-        onPress={draft.addItem}
+        icon="camera-outline"
+        title={t("confirm.addPhoto")}
+        onPress={addPhoto}
       />
 
       {presentKeys.length > 0 ? (
@@ -119,17 +194,19 @@ export default function Confirm() {
           {presentKeys.map((key) => {
             const saved = rateList.find((r) => r.categoryKey === key);
             const override = draft.overrides[key];
-            const per = saved?.per ?? "area";
-            const value = override?.value ?? saved?.value ?? "";
+            const rate = rateFor(key);
             return (
               <Card key={key}>
                 <TextField
                   label={categoryLabel(key, rateList, i18n.language)}
                   keyboardType="decimal-pad"
-                  suffix={`Rs ${t(`result.per.${per}`)}`}
-                  value={value}
+                  suffix={`Rs ${t(`result.per.${rate.per}`)}`}
+                  value={rate.value}
                   onChangeText={(v) =>
-                    draft.setOverride(key, { value: sanitizeDecimal(v), per })
+                    draft.setOverride(key, {
+                      value: sanitizeDecimal(v),
+                      per: rate.per,
+                    })
                   }
                 />
                 {override && override.value !== saved?.value ? (
@@ -169,6 +246,20 @@ export default function Confirm() {
         onConfirm={() => {
           if (deleteKey) draft.removeItem(deleteKey);
           setDeleteKey(null);
+        }}
+      />
+
+      <ConfirmDialog
+        visible={removePhotoKey !== null}
+        destructive
+        title={t("confirm.removePhotoTitle")}
+        body={t("confirm.removePhotoBody")}
+        confirmLabel={t("common.delete")}
+        cancelLabel={t("common.cancel")}
+        onCancel={() => setRemovePhotoKey(null)}
+        onConfirm={() => {
+          if (removePhotoKey) draft.removePhoto(removePhotoKey);
+          setRemovePhotoKey(null);
         }}
       />
 

@@ -52,7 +52,10 @@
     "uploadingHint": "This can take up to 30 seconds on a slow connection.",
     "denied": "Permission is needed to use the camera or photos.",
     "openSettings": "Open settings",
-    "tooLarge": "This photo is too large. Try a smaller photo."
+    "tooLarge": "This photo is too large. Try a smaller photo.",
+    "workType": "Work type for this photo",
+    "rate": "Rate",
+    "rateHint": "Photos with the same work type in this estimate share one rate."
   },
   "confirm": {
     "title": "Check the numbers",
@@ -78,7 +81,12 @@
     "discardBody": "Your edits are saved on this phone, or you can discard them.",
     "emptyTitle": "No items yet",
     "emptyBody": "Add items by hand to continue.",
-    "item": "Item {{n}}"
+    "item": "Item {{n}}",
+    "addPhoto": "Add another photo",
+    "photo": "Photo {{n}}",
+    "removePhotoTitle": "Remove this photo?",
+    "removePhotoBody": "All items from this photo will be removed.",
+    "otherItems": "Other items"
   },
   "result": {
     "title": "Estimate",

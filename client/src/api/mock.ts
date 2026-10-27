@@ -47,8 +47,8 @@ const ratesFor = (projectId: string): Rate[] =>
 const extracted: EstimateItem[] = [
   {
     id: "i1",
-    categoryKey: "tiles_marble",
-    label: "Living room floor",
+    categoryKey: "unknown",
+    label: "Section A",
     length: "12",
     breadth: "10",
     count: null,
@@ -56,30 +56,22 @@ const extracted: EstimateItem[] = [
   },
   {
     id: "i2",
-    categoryKey: "plaster",
-    label: "Bedroom wall",
+    categoryKey: "unknown",
+    label: "Section B",
     length: "14",
     breadth: "9",
     count: null,
     unit: "ft",
   },
-  {
-    id: "i3",
-    categoryKey: "unknown",
-    label: "Passage",
-    length: "20",
-    breadth: "",
-    count: null,
-    unit: "ft",
-  },
 ];
+let extractCount = 0;
 
 // Fixed demo numbers only. Real calculation always happens on the backend,
 // so this result does not change when you edit rates in mock mode.
 const sampleResult: CalculateResponse = {
   currency: "NPR",
-  grandTotal: "15870.00",
-  invalid: [{ id: "i3", reason: "Category is unknown" }],
+  grandTotal: "11550.00",
+  invalid: [],
   groups: [
     {
       categoryKey: "tiles_marble",
@@ -89,7 +81,7 @@ const sampleResult: CalculateResponse = {
       items: [
         {
           id: "i1",
-          label: "Living room floor",
+          label: "Section A",
           qty: "120",
           unit: "sq ft",
           amount: "10200.00",
@@ -98,20 +90,27 @@ const sampleResult: CalculateResponse = {
       subtotal: "10200.00",
     },
     {
-      categoryKey: "plaster",
-      label: "Plaster",
-      labelNe: "प्लास्टर",
-      rate: { value: "45", per: "area" },
+      categoryKey: "koramasino",
+      label: "Koramasino",
+      labelNe: "कोरामसिनो",
+      rate: { value: "30", per: "length" },
       items: [
         {
           id: "i2",
-          label: "Bedroom wall",
-          qty: "126",
-          unit: "sq ft",
-          amount: "5670.00",
+          label: "Section A",
+          qty: "20",
+          unit: "ft",
+          amount: "600.00",
+        },
+        {
+          id: "i3",
+          label: "Section B",
+          qty: "25",
+          unit: "ft",
+          amount: "750.00",
         },
       ],
-      subtotal: "5670.00",
+      subtotal: "1350.00",
     },
   ],
 };
@@ -165,9 +164,14 @@ export async function mockRequest<T>(
 
   // Estimates
   if (path.endsWith("/estimates/extract")) {
-    const res: ExtractResponse = { id: "e1", items: extracted };
+    extractCount += 1;
+    const res: ExtractResponse = {
+      id: "e1",
+      items: extracted.map((i) => ({ ...i, id: `${i.id}-${extractCount}` })),
+    };
     return out(res);
   }
+
   if (path.endsWith("/items") || path.endsWith("/confirm")) return out({});
   if (path.endsWith("/calculate")) return out(sampleResult);
 
