@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Estimator",
+    "slug": "estimator",
+    "scheme": "estimator",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.example.estimator",
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Estimator needs the camera to take a photo of your measurements.",
+          "photosPermission": "Estimator needs your photos so you can choose a picture of your measurements."
+        }
+      ],
+      "expo-sharing",
+      "expo-localization",
+      "expo-status-bar"
+    ]
+  }
+}
