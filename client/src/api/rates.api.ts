@@ -1,8 +1,11 @@
-import { request } from './client';
-import type { Rate, RateOverride } from './types';
+import { request } from "./client";
+import type { Rate, RateOverride } from "./types";
 
 export const ratesApi = {
-  list: () => request<Rate[]>('/rates'),
-  save: (categoryKey: string, body: RateOverride) =>
-    request<Rate>(`/rates/${categoryKey}`, { method: 'PUT', body }),
+  list: (projectId: string) => request<Rate[]>(`/projects/${projectId}/rates`),
+  save: (projectId: string, categoryKey: string, body: RateOverride) =>
+    request<Rate>(`/projects/${projectId}/rates/${categoryKey}`, {
+      method: "PUT",
+      body,
+    }),
 };

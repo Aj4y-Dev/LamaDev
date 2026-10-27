@@ -33,13 +33,6 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="rates"
-        options={{
-          title: t("tabs.rates"),
-          tabBarIcon: icon("pricetags-outline"),
-        }}
-      />
-      <Tabs.Screen
         name="settings"
         options={{
           title: t("tabs.settings"),

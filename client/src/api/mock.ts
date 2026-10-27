@@ -14,7 +14,9 @@ const delay = (ms = 400) => new Promise<void>((r) => setTimeout(r, ms));
 let projects: Project[] = [
   { id: "p1", title: "Sharma House", clientName: "Ram Sharma" },
 ];
-let rates: Rate[] = [
+
+// Every project starts from these sample rates, then keeps its own copy.
+const baseRates: Rate[] = [
   {
     categoryKey: "tiles_marble",
     label: "Tiles / Marble",
@@ -37,6 +39,10 @@ let rates: Rate[] = [
     per: "length",
   },
 ];
+
+const ratesByProject: Record<string, Rate[]> = {};
+const ratesFor = (projectId: string): Rate[] =>
+  (ratesByProject[projectId] ??= baseRates.map((r) => ({ ...r })));
 
 const extracted: EstimateItem[] = [
   {
@@ -68,10 +74,11 @@ const extracted: EstimateItem[] = [
   },
 ];
 
-// Fixed demo numbers only. Real calculation always happens on the backend.
+// Fixed demo numbers only. Real calculation always happens on the backend,
+// so this result does not change when you edit rates in mock mode.
 const sampleResult: CalculateResponse = {
   currency: "NPR",
-  grandTotal: "17610.00",
+  grandTotal: "15870.00",
   invalid: [{ id: "i3", reason: "Category is unknown" }],
   groups: [
     {
@@ -117,6 +124,15 @@ export async function mockRequest<T>(
   const method = opts.method ?? "GET";
   const out = (v: unknown) => v as T;
 
+  // Auth
+  if (path === "/auth/login" || path === "/auth/register") {
+    return out({
+      token: "mock-token",
+      user: { id: "u1", email: "demo@example.com" },
+    });
+  }
+
+  // Projects
   if (path === "/projects" && method === "GET") return out(projects);
   if (path === "/projects" && method === "POST") {
     const b = opts.body as CreateProjectInput;
@@ -128,18 +144,26 @@ export async function mockRequest<T>(
     projects = [p, ...projects];
     return out(p);
   }
-
-  if (path === "/auth/login" || path === "/auth/register") {
-    return out({
-      token: "mock-token",
-      user: { id: "u1", email: "demo@example.com" },
-    });
+  const one = path.match(/^\/projects\/([^/]+)$/);
+  if (one && method === "GET") {
+    return out(projects.find((p) => p.id === one[1]) ?? projects[0]);
   }
 
-  const one = path.match(/^\/projects\/([^/]+)$/);
-  if (one && method === "GET")
-    return out(projects.find((p) => p.id === one[1]) ?? projects[0]);
+  // Rates, kept per project
+  const projectRates = path.match(/^\/projects\/([^/]+)\/rates$/);
+  if (projectRates && method === "GET") return out(ratesFor(projectRates[1]));
 
+  const projectRate = path.match(/^\/projects\/([^/]+)\/rates\/([^/]+)$/);
+  if (projectRate && method === "PUT") {
+    const b = opts.body as RateOverride;
+    const list = ratesFor(projectRate[1]);
+    const idx = list.findIndex((r) => r.categoryKey === projectRate[2]);
+    if (idx === -1) return out({});
+    list[idx] = { ...list[idx], value: b.value, per: b.per };
+    return out(list[idx]);
+  }
+
+  // Estimates
   if (path.endsWith("/estimates/extract")) {
     const res: ExtractResponse = { id: "e1", items: extracted };
     return out(res);
@@ -147,14 +171,5 @@ export async function mockRequest<T>(
   if (path.endsWith("/items") || path.endsWith("/confirm")) return out({});
   if (path.endsWith("/calculate")) return out(sampleResult);
 
-  if (path === "/rates" && method === "GET") return out(rates);
-  const rate = path.match(/^\/rates\/([^/]+)$/);
-  if (rate && method === "PUT") {
-    const b = opts.body as RateOverride;
-    rates = rates.map((r) =>
-      r.categoryKey === rate[1] ? { ...r, value: b.value } : r,
-    );
-    return out(rates.find((r) => r.categoryKey === rate[1]));
-  }
   return out({});
 }
