@@ -61,3 +61,28 @@ export async function compressForUpload(img: PickedImage): Promise<string> {
   if (blob.size > MAX_IMAGE_BYTES) throw new ImageTooLargeError("too large");
   return out.uri;
 }
+
+export type PickManyResult =
+  | { status: "ok"; images: PickedImage[] }
+  | { status: "denied" }
+  | { status: "cancelled" };
+
+export async function pickManyFromGallery(): Promise<PickManyResult> {
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) return { status: "denied" };
+  const res = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    allowsMultipleSelection: true,
+    selectionLimit: 10,
+    quality: 1,
+  });
+  if (res.canceled || res.assets.length === 0) return { status: "cancelled" };
+  return {
+    status: "ok",
+    images: res.assets.map((a) => ({
+      uri: a.uri,
+      width: a.width,
+      height: a.height,
+    })),
+  };
+}
