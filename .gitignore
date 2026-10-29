@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+web-build/
+coverage/
+*.tsbuildinfo
+
+# Secrets (keep the .env.example files, never commit .env)
+.env
+.env.*
+!.env.example
+
+# Expo / React Native (client)
+.expo/
+expo-env.d.ts
+.metro-health-check*
+android/
+ios/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Backend (server)
+uploads/
+*.traineddata
+*.traineddata.gz
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor, OS and tool files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+.claude/settings.local.json

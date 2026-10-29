@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Secrets (keep .env.example, never commit .env)
+.env
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tests and coverage
+coverage/
+
+# Uploads and local data
+uploads/
+*.traineddata
+*.traineddata.gz
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
