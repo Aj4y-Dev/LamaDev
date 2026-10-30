@@ -1,182 +1,205 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { randomUUID } from 'crypto';
-import { DataSource, EntityManager, Repository } from 'typeorm';
-import { CalcItem, CalcResult, CalculationService } from '../calculation/calculation.service';
-import { CalcMode, RateInput } from '../common/types';
-import { ExtractionService } from '../extraction/extraction.service';
-import { NormalizerService } from '../normalizer/normalizer.service';
-import { ProjectsService } from '../projects/projects.service';
-import { STORAGE_SERVICE, StorageService } from '../storage/storage.service';
-import { CalculateDto, ExtractDto, UpdateItemsDto } from './dto/estimates.dto';
-import { EstimateItem } from './estimate-item.entity';
-import { Estimate } from './estimate.entity';
-import { compressImage } from './image.util';
-import { parseRates, toCalcRates } from './rates.util';
+import type { PoolClient } from 'pg';
+import { calculate, CalcItem, CalcRate, CalcResult } from '../calc/calculation';
+import { Db, one, pool, rows, tx } from '../db';
+import { readItems } from '../extraction/extraction.service';
+import { compressImage } from '../extraction/image';
+import type { ItemReader } from '../extraction/item-reader';
+import { normalizeDimensionText, normalizeExtractedItem, normalizeLabel } from '../extraction/normalizer';
+import type { LocalPhotoStore } from '../extraction/storage';
+import { D } from '../lib/decimal';
+import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
+import { CalcMode, RateInput, Unit } from '../lib/types';
+import { log } from '../log';
+import { assertProjectOwned } from '../projects/projects.routes';
 
-const itemView = (i: EstimateItem) => ({
-  id: i.id,
-  categoryKey: i.categoryKey,
-  label: i.label,
-  length: i.length ?? '',
-  breadth: i.breadth,
-  count: i.count,
-  unit: i.unit,
+interface EstimateRow {
+  id: string;
+  project_id: string;
+  status: 'draft' | 'confirmed';
+  mode: CalcMode;
+  rates: Record<string, RateInput> | null;
+  grand_total: string | null;
+}
+interface ItemRow {
+  id: string;
+  estimate_id: string;
+  category_key: string;
+  label: string;
+  length: string | null;
+  breadth: string | null;
+  count: number | null;
+  unit: Unit;
+  uncertain: boolean;
+  sort_index: number;
+}
+
+const itemView = (i: ItemRow) => ({
+  id: i.id, categoryKey: i.category_key, label: i.label, length: i.length ?? '', breadth: i.breadth, count: i.count, unit: i.unit, uncertain: i.uncertain,
 });
 
-@Injectable()
-export class EstimatesService {
-  private readonly logger = new Logger(EstimatesService.name);
+export interface Deps {
+  reader: ItemReader;
+  photos: LocalPhotoStore;
+}
 
-  constructor(
-    @InjectRepository(Estimate) private readonly estimates: Repository<Estimate>,
-    @InjectRepository(EstimateItem) private readonly items: Repository<EstimateItem>,
-    private readonly dataSource: DataSource,
-    private readonly projects: ProjectsService,
-    private readonly extraction: ExtractionService,
-    private readonly normalizer: NormalizerService,
-    private readonly calculation: CalculationService,
-    @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
-  ) {}
+/** Other users' estimates look like they do not exist. Pass lock=true inside a transaction to serialise edits. */
+async function loadOwned(db: Db, userId: string, id: string, lock = false): Promise<EstimateRow> {
+  const e = await one<EstimateRow>(
+    db,
+    `select e.* from estimates e join projects p on p.id = e.project_id where e.id = $1 and p.user_id = $2 ${lock ? 'for update of e' : ''}`,
+    [id, userId],
+  );
+  if (!e) throw notFound('Estimate not found');
+  return e;
+}
 
-  // ---------- extract: upload -> compress -> read -> validate -> normalize -> save ----------
-  async extract(userId: string, projectId: string, file: Express.Multer.File | undefined, dto: ExtractDto) {
-    if (!file) throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'The "image" file is required' });
-    await this.projects.findOwnedOrFail(userId, projectId);
+function assertDraft(e: EstimateRow): void {
+  if (e.status !== 'draft') throw conflict('ALREADY_CONFIRMED', 'This estimate is already saved');
+}
 
-    const jpeg = await compressImage(file.buffer);
-    const raw = await this.extraction.extractItems(jpeg);
-    const drafts = raw.map((r) => this.normalizer.normalizeExtractedItem(r, dto.categoryKey));
+const toCalcRates = (stored: Record<string, RateInput>): Record<string, CalcRate> =>
+  Object.fromEntries(Object.entries(stored).map(([k, r]) => [k, { value: new D(r.value), per: r.per, label: r.label ?? k }]));
 
-    const saved = await this.dataSource.transaction(async (m) => {
-      let estimate: Estimate;
-      if (dto.estimateId) {
-        estimate = await this.loadOwned(userId, dto.estimateId, m);
-        this.assertDraft(estimate);
-        if (estimate.projectId !== projectId) throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Estimate belongs to another project' });
+async function run(db: Db, id: string, rates: Record<string, RateInput>, mode: CalcMode): Promise<CalcResult> {
+  const items = await rows<ItemRow>(db, 'select * from estimate_items where estimate_id = $1 order by sort_index', [id]);
+  const calcItems: CalcItem[] = items.map((r) => ({
+    id: r.id, categoryKey: r.category_key, label: r.label, length: r.length, breadth: r.breadth, count: r.count, unit: r.unit, uncertain: r.uncertain,
+  }));
+  return calculate(calcItems, toCalcRates(rates), mode);
+}
+
+// ---------- extract: upload -> compress -> read -> normalize -> save ----------
+export async function extractFromPhoto(
+  deps: Deps, userId: string, projectId: string, file: Express.Multer.File | undefined,
+  fields: { categoryKey: string; estimateId?: string },
+) {
+  if (!file) throw badRequest('The "image" file is required');
+  await assertProjectOwned(userId, projectId);
+
+  const jpeg = await compressImage(file.buffer);
+  const raw = await readItems(deps.reader, jpeg, log.warn);
+  const drafts = raw.map((r) => normalizeExtractedItem(r, fields.categoryKey));
+
+  const saved = await tx(async (c: PoolClient) => {
+    let estimateId: string;
+    if (fields.estimateId) {
+      const e = await loadOwned(c, userId, fields.estimateId, true);
+      assertDraft(e);
+      if (e.project_id !== projectId) throw badRequest('This estimate belongs to another project');
+      estimateId = e.id;
+    } else {
+      const created = await one<{ id: string }>(c, 'insert into estimates (project_id) values ($1) returning id', [projectId]);
+      estimateId = (created as { id: string }).id;
+    }
+    const start = (await one<{ n: number }>(c, 'select count(*)::int as n from estimate_items where estimate_id = $1', [estimateId]))?.n ?? 0;
+    const out: ItemRow[] = [];
+    for (let i = 0; i < drafts.length; i++) {
+      const d = drafts[i];
+      const r = await one<ItemRow>(
+        c,
+        `insert into estimate_items (estimate_id, category_key, label, length, breadth, count, unit, uncertain, sort_index)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
+        [estimateId, d.categoryKey, d.label, d.length, d.breadth, d.count, d.unit, d.uncertain, start + i],
+      );
+      out.push(r as ItemRow);
+    }
+    return { estimateId, items: out };
+  });
+
+  // Keep the photo on this server's disk. A storage failure must not lose the estimate.
+  try {
+    const key = await deps.photos.save(userId, saved.estimateId, jpeg);
+    await pool.query('update estimate_items set photo_key = $1 where id = any($2::uuid[])', [key, saved.items.map((i) => i.id)]);
+  } catch (err) {
+    log.warn(`could not store the photo: ${err instanceof Error ? err.message : 'error'}`);
+  }
+  return { id: saved.estimateId, items: saved.items.map(itemView) };
+}
+
+// ---------- read ----------
+export async function getEstimate(userId: string, id: string) {
+  const e = await loadOwned(pool, userId, id);
+  const items = await rows<ItemRow>(pool, 'select * from estimate_items where estimate_id = $1 order by sort_index', [id]);
+  return { id: e.id, projectId: e.project_id, status: e.status, mode: e.mode, rates: e.rates, grandTotal: e.grand_total, items: items.map(itemView) };
+}
+
+// ---------- replace the item list (keeps ids so results can point back at items) ----------
+export interface ItemInput {
+  id?: string;
+  categoryKey: string;
+  label: string;
+  length?: string | null;
+  breadth?: string | null;
+  count?: number | null;
+  unit: Unit;
+}
+
+export async function replaceItems(userId: string, id: string, items: ItemInput[]) {
+  const saved = await tx(async (c) => {
+    const e = await loadOwned(c, userId, id, true);
+    assertDraft(e);
+    const existing = new Set((await rows<{ id: string }>(c, 'select id from estimate_items where estimate_id = $1', [id])).map((r) => r.id));
+    const keep: string[] = [];
+    const out: ItemRow[] = [];
+
+    for (let index = 0; index < items.length; index++) {
+      const it = items[index];
+      const values = [it.categoryKey, normalizeLabel(it.label), normalizeDimensionText(it.length), normalizeDimensionText(it.breadth), it.count ?? null, it.unit, index];
+      if (it.id && existing.has(it.id)) {
+        keep.push(it.id);
+        out.push((await one<ItemRow>(
+          c,
+          // The server keeps its own "unsure" flag. It is cleared only if a person changed the numbers.
+          `update estimate_items set category_key=$1, label=$2,
+             uncertain = case when length is distinct from $3 or breadth is distinct from $4 then false else uncertain end,
+             length=$3, breadth=$4, count=$5, unit=$6, sort_index=$7,
+             qty=null, rate_value=null, rate_type=null, amount=null where id=$8 and estimate_id=$9 returning *`,
+          [...values, it.id, id],
+        )) as ItemRow);
       } else {
-        estimate = await m.save(m.create(Estimate, { projectId, status: 'draft', mode: 'decimal', rates: null }));
+        const r = (await one<ItemRow>(
+          c,
+          `insert into estimate_items (category_key, label, length, breadth, count, unit, sort_index, estimate_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+          [...values, id],
+        )) as ItemRow;
+        keep.push(r.id);
+        out.push(r);
       }
-      const start = await m.count(EstimateItem, { where: { estimateId: estimate.id } });
-      const rows = drafts.map((d, i) => m.create(EstimateItem, { ...d, estimateId: estimate.id, sortIndex: start + i }));
-      return { estimateId: estimate.id, rows: await m.save(rows) };
-    });
-
-    await this.keepPhoto(userId, saved.estimateId, jpeg, saved.rows);
-    return { id: saved.estimateId, items: saved.rows.map(itemView) };
-  }
-
-  // ---------- read ----------
-  async getOne(userId: string, id: string) {
-    const e = await this.loadOwned(userId, id);
-    const items = await this.items.find({ where: { estimateId: id }, order: { sortIndex: 'ASC' } });
-    return {
-      id: e.id,
-      projectId: e.projectId,
-      status: e.status,
-      mode: e.mode,
-      rates: e.rates,
-      grandTotal: e.grandTotal?.toFixed(2) ?? null,
-      items: items.map(itemView),
-    };
-  }
-
-  // ---------- replace the item list (keeps ids so results can point back at items) ----------
-  async replaceItems(userId: string, id: string, dto: UpdateItemsDto) {
-    const estimate = await this.loadOwned(userId, id);
-    this.assertDraft(estimate);
-
-    const rows = await this.dataSource.transaction(async (m) => {
-      const existing = await m.find(EstimateItem, { where: { estimateId: id } });
-      const byId = new Map(existing.map((e) => [e.id, e]));
-      const keep = new Set<string>();
-      const out: EstimateItem[] = [];
-
-      dto.items.forEach((it, index) => {
-        const row = it.id && byId.has(it.id) ? (byId.get(it.id) as EstimateItem) : m.create(EstimateItem, { estimateId: id });
-        if (row.id) keep.add(row.id);
-        row.categoryKey = it.categoryKey;
-        row.label = this.normalizer.normalizeLabel(it.label);
-        row.length = this.normalizer.normalizeDimensionText(it.length);
-        row.breadth = this.normalizer.normalizeDimensionText(it.breadth);
-        row.count = it.count ?? null;
-        row.unit = it.unit;
-        row.sortIndex = index;
-        row.qty = null;
-        row.rateValue = null;
-        row.rateType = null;
-        row.amount = null;
-        out.push(row);
-      });
-
-      const drop = existing.filter((e) => !keep.has(e.id)).map((e) => e.id);
-      if (drop.length) await m.delete(EstimateItem, drop);
-      return m.save(out);
-    });
-
-    return { id, items: rows.map(itemView) };
-  }
-
-  // ---------- calculate (does not lock the estimate) ----------
-  async calculate(userId: string, id: string, dto: CalculateDto): Promise<CalcResult> {
-    const estimate = await this.loadOwned(userId, id);
-    this.assertDraft(estimate);
-    const rates = parseRates(dto.rates);
-    const mode: CalcMode = dto.mode ?? estimate.mode;
-    await this.estimates.update(id, { rates, mode });
-    return this.run(id, rates, mode);
-  }
-
-  // ---------- confirm: snapshot rates and amounts ----------
-  async confirm(userId: string, id: string) {
-    const estimate = await this.loadOwned(userId, id);
-    this.assertDraft(estimate);
-    if (!estimate.rates) {
-      throw new UnprocessableEntityException({ code: 'NOT_CALCULATED', message: 'Calculate the estimate before saving it' });
     }
-    const result = await this.run(id, estimate.rates, estimate.mode);
+    await c.query('delete from estimate_items where estimate_id = $1 and not (id = any($2::uuid[]))', [id, keep]);
+    return out;
+  });
+  return { id, items: saved.map(itemView) };
+}
 
-    await this.dataSource.transaction(async (m) => {
-      for (const g of result.groups) {
-        for (const line of g.items) {
-          await m.update(EstimateItem, line.id, { qty: line.qty as never, rateValue: g.rate.value as never, rateType: g.rate.per, amount: line.amount as never });
-        }
+// ---------- calculate (does not lock the estimate) ----------
+export async function calculateEstimate(userId: string, id: string, body: { mode?: CalcMode; rates: Record<string, RateInput> }): Promise<CalcResult> {
+  const e = await loadOwned(pool, userId, id);
+  assertDraft(e);
+  const rates: Record<string, RateInput> = {};
+  for (const [k, r] of Object.entries(body.rates)) {
+    const label = (r.label ?? '').replace(/\s+/g, ' ').trim();
+    rates[k] = { value: r.value, per: r.per, ...(label ? { label } : {}) };
+  }
+  const mode = body.mode ?? e.mode;
+  await pool.query('update estimates set rates = $1, mode = $2, updated_at = now() where id = $3', [JSON.stringify(rates), mode, id]);
+  return run(pool, id, rates, mode);
+}
+
+// ---------- confirm: snapshot rates and amounts ----------
+export async function confirmEstimate(userId: string, id: string) {
+  return tx(async (c) => {
+    const e = await loadOwned(c, userId, id, true);
+    assertDraft(e);
+    if (!e.rates) throw unprocessable('NOT_CALCULATED', 'Calculate the estimate before saving it');
+    const result = await run(c, id, e.rates, e.mode);
+    for (const g of result.groups) {
+      for (const line of g.items) {
+        await c.query('update estimate_items set qty = $1, rate_value = $2, rate_type = $3, amount = $4 where id = $5', [line.qty, e.rates[g.categoryKey].value, g.rate.per, line.amount, line.id]);
       }
-      await m.update(Estimate, id, { status: 'confirmed', grandTotal: result.grandTotal as never });
-    });
-
+    }
+    await c.query(`update estimates set status = 'confirmed', grand_total = $1, updated_at = now() where id = $2`, [result.grandTotal, id]);
     return { id, status: 'confirmed', grandTotal: result.grandTotal };
-  }
-
-  // ---------- helpers ----------
-  private async run(id: string, rates: Record<string, RateInput>, mode: CalcMode): Promise<CalcResult> {
-    const rows = await this.items.find({ where: { estimateId: id }, order: { sortIndex: 'ASC' } });
-    const calcItems: CalcItem[] = rows.map((r) => ({
-      id: r.id, categoryKey: r.categoryKey, label: r.label, length: r.length, breadth: r.breadth, count: r.count, unit: r.unit,
-    }));
-    return this.calculation.calculate(calcItems, toCalcRates(rates), mode);
-  }
-
-  /** Other users' estimates look like they do not exist. */
-  private async loadOwned(userId: string, id: string, manager?: EntityManager): Promise<Estimate> {
-    const repo = manager ? manager.getRepository(Estimate) : this.estimates;
-    const e = await repo.findOne({ where: { id }, relations: { project: true } });
-    if (!e || e.project.userId !== userId) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Estimate not found' });
-    return e;
-  }
-
-  private assertDraft(e: Estimate): void {
-    if (e.status !== 'draft') throw new ConflictException({ code: 'ALREADY_CONFIRMED', message: 'This estimate is already saved' });
-  }
-
-  private async keepPhoto(userId: string, estimateId: string, jpeg: Buffer, rows: EstimateItem[]): Promise<void> {
-    if (!this.storage.enabled) return;
-    try {
-      const key = `${userId}/${estimateId}/${randomUUID()}.jpg`;
-      await this.storage.put(key, jpeg, 'image/jpeg');
-      await this.items.update(rows.map((r) => r.id), { photoKey: key });
-    } catch {
-      this.logger.warn('Could not store the photo; continuing without it');
-    }
-  }
+  });
 }

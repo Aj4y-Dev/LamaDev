@@ -152,6 +152,23 @@ export default function Result() {
         </Card>
       ) : null}
 
+      {(result.warnings?.length ?? 0) > 0 ? (
+        <Card accent="warning">
+          <AppText bold>{t("result.checkTitle")}</AppText>
+          <AppText variant="label" muted>
+            {t("result.checkHint")}
+          </AppText>
+          {result.groups
+            .flatMap((g) => g.items)
+            .filter((l) => l.check)
+            .map((l) => (
+              <AppText key={l.id}>
+                {l.label || l.id}: {l.size}
+              </AppText>
+            ))}
+        </Card>
+      ) : null}
+
       <ReportView
         viewRef={reportRef}
         result={result}

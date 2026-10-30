@@ -27,6 +27,7 @@ export interface EstimateItem {
   length: string;
   breadth?: string | null;
   count?: number | null;
+  uncertain?: boolean;
   unit: Unit;
 }
 
@@ -57,7 +58,9 @@ export interface ResultItem {
   label: string;
   qty: string;
   unit: string;
+  size?: string;
   amount: string;
+  check?: boolean;
 }
 export interface ResultGroupData {
   categoryKey: string;
@@ -72,4 +75,5 @@ export interface CalculateResponse {
   invalid: { id: string; reason: string }[];
   grandTotal: string;
   currency: "NPR";
+  warnings?: { id: string; reason: string }[];
 }

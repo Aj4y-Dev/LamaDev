@@ -121,5 +121,7 @@
     "UNAUTHORIZED": "Please log in again.",
     "RATE_LIMITED": "Too many requests. Try again in a few minutes.",
     "boundary": "Something went wrong. Please restart the app."
-  }
+  },
+  "checkTitle": "Please double-check these numbers",
+  "checkHint": "They are counted in the total, but the photo was hard to read. Compare them with your sheet."
 }
