@@ -29,42 +29,31 @@ export interface RequestOptions {
   auth?: boolean;
 }
 
-export async function request<T>(
-  path: string,
-  opts: RequestOptions = {},
-): Promise<T> {
-  if (process.env.EXPO_PUBLIC_USE_MOCK === "true")
-    return mockRequest<T>(path, opts);
-  const {
-    method = "GET",
-    body,
-    formData,
-    timeoutMs = 15_000,
-    signal,
-    auth = true,
-  } = opts;
+interface RawResponse {
+  status: number;
+  text: string;
+}
+
+/** JSON requests use fetch. */
+async function fetchRaw(
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string },
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<RawResponse> {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
   }, timeoutMs);
-  signal?.addEventListener("abort", () => controller.abort());
-
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const token = useAuthStore.getState().token;
-  if (auth && token) headers.Authorization = `Bearer ${token}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-
-  let res: Response;
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort);
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
-      method,
-      headers,
-      body: formData ?? (body !== undefined ? JSON.stringify(body) : undefined),
-      signal: controller.signal,
-    });
-  } catch {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return { status: res.status, text: await res.text() };
+  } catch (err) {
+    console.warn("[api] request failed", init.method, url, String(err));
     if (signal?.aborted) throw new ApiError("CANCELLED", "Cancelled", 0);
     throw new ApiError(
       timedOut ? "TIMEOUT" : "NETWORK_ERROR",
@@ -73,20 +62,83 @@ export async function request<T>(
     );
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
   }
+}
+
+/** Photo uploads use XMLHttpRequest, which sends { uri, name, type } files reliably on Android. */
+function xhrPost(
+  url: string,
+  form: FormData,
+  headers: Record<string, string>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.timeout = timeoutMs;
+    xhr.onload = () => resolve({ status: xhr.status, text: xhr.responseText });
+    xhr.onerror = () => {
+      console.warn("[api] upload failed", url, "status", xhr.status);
+      reject(new ApiError("NETWORK_ERROR", "Network request failed", 0));
+    };
+    xhr.ontimeout = () =>
+      reject(new ApiError("TIMEOUT", "Upload timed out", 0));
+    xhr.onabort = () => reject(new ApiError("CANCELLED", "Cancelled", 0));
+    signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(form);
+  });
+}
+
+export async function request<T>(
+  path: string,
+  opts: RequestOptions = {},
+): Promise<T> {
+  if (process.env.EXPO_PUBLIC_USE_MOCK === "true")
+    return mockRequest<T>(path, opts);
+
+  const {
+    method = "GET",
+    body,
+    formData,
+    timeoutMs = 15_000,
+    signal,
+    auth = true,
+  } = opts;
+
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const token = useAuthStore.getState().token;
+  if (auth && token) headers.Authorization = `Bearer ${token}`;
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+
+  const url = `${BASE_URL}${path}`;
+  const raw = formData
+    ? await xhrPost(url, formData, headers, timeoutMs, signal)
+    : await fetchRaw(
+        url,
+        {
+          method,
+          headers,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        },
+        timeoutMs,
+        signal,
+      );
 
   let json: unknown = null;
   try {
-    json = await res.json();
+    json = JSON.parse(raw.text);
   } catch {
-    /* empty body */
+    /* empty or non-JSON body */
   }
   const envelope = json as {
     data?: T;
     error?: { code: string; message: string; details?: unknown };
   } | null;
 
-  if (res.status === 401 && auth) {
+  if (raw.status === 401 && auth) {
     onUnauthorized?.();
     throw new ApiError(
       "UNAUTHORIZED",
@@ -94,12 +146,12 @@ export async function request<T>(
       401,
     );
   }
-  if (!res.ok || envelope?.error) {
+  if (raw.status < 200 || raw.status >= 300 || envelope?.error) {
     const e = envelope?.error;
     throw new ApiError(
       e?.code ?? "UNKNOWN",
       e?.message ?? "Request failed",
-      res.status,
+      raw.status,
       e?.details,
     );
   }

@@ -1,68 +1,55 @@
 {
-  "name": "server",
+  "name": "estimator-server",
   "version": "1.0.0",
   "private": true,
+  "main": "dist/index.js",
   "scripts": {
-    "build": "nest build",
-    "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
-    "start:prod": "node dist/main.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
-    "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/data-source.ts",
-    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts"
-  },
-  "dependencies": {
-    "@nestjs/common": "^11",
-    "@nestjs/config": "^4",
-    "@nestjs/core": "^11",
-    "@nestjs/jwt": "^11",
-    "@nestjs/passport": "^11",
-    "@nestjs/platform-express": "^11",
-    "@nestjs/throttler": "^6",
-    "@nestjs/typeorm": "^11",
-    "@tesseract.js-data/eng": "^1.0.0",
-    "@tesseract.js-data/nep": "^1.0.0",
-    "bcryptjs": "^3",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.2",
-    "decimal.js": "^10",
-    "helmet": "^8",
-    "passport": "^0.7",
-    "passport-jwt": "^4",
-    "pg": "^8",
-    "reflect-metadata": "^0.2",
-    "rxjs": "^7",
-    "sharp": "*",
-    "tesseract.js": "^7.0.0",
-    "typeorm": "^0.3",
-    "zod": "^3"
-  },
-  "devDependencies": {
-    "@nestjs/cli": "^11",
-    "@nestjs/schematics": "^11",
-    "@nestjs/testing": "^11",
-    "@types/express": "^5",
-    "@types/jest": "^29",
-    "@types/multer": "^2",
-    "@types/node": "^22",
-    "@types/passport-jwt": "^4",
-    "jest": "^29",
-    "ts-jest": "^29",
-    "ts-node": "^10",
-    "typescript": "^5.9"
+    "test": "jest"
   },
   "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.ts$": "ts-jest"
     },
     "testEnvironment": "node"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/nep": "^1.0.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "decimal.js": "^10.6.0",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5",
+    "tesseract.js": "^7.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.14",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.15",
+    "tsx": "^4.23.15",
+    "typescript": "5.9"
+  },
+  "description": "Construction estimator API: plain Node.js + TypeScript (Express, PostgreSQL, free local OCR with Tesseract)",
+  "engines": {
+    "node": ">=20"
   }
 }

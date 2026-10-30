@@ -1,33 +1,47 @@
-# Estimator backend (NestJS 11 + PostgreSQL)
+# Estimator backend (plain Node.js + TypeScript)
 
-Reads photos of measurements, keeps estimates, and does ALL the maths with exact decimals.
-Photos are read with Tesseract (free, local OCR, no API key). It only reads text. It never calculates.
+Express 5, PostgreSQL 13+, no framework and no ORM. Photos are read with Tesseract (free, local,
+no API key) and saved on this server's disk. All the maths uses exact decimals and fractions.
 
-## Run it
-1. Start PostgreSQL (pick one):
-   - Docker: `docker compose up -d`
-   - Or install PostgreSQL locally, or use a free hosted one (Neon, Supabase) and set `DB_SSL=true`.
-2. `pnpm install`  (if pnpm blocks a build script, run `pnpm approve-builds` and allow `sharp`)
-3. `copy .env.example .env` and edit `DATABASE_URL` and `JWT_SECRET`.
-4. `pnpm start:dev`  -> API on http://localhost:3000/api/v1 (tables are created automatically in development)
-5. Test: `pnpm test` and `pnpm typecheck`
+## Run it (development)
+1. Start PostgreSQL: `docker compose up -d` (or use your own, or a hosted one with `DB_SSL=true`).
+2. `pnpm install`, then `pnpm approve-builds` and allow `sharp` and `tesseract.js` if asked.
+3. `copy .env.example .env` and set `DATABASE_URL` and `JWT_SECRET`.
+4. `pnpm dev` -> API on http://localhost:3000/api/v1 (tables are created automatically on start).
+5. Checks: `pnpm typecheck` and `pnpm test`.
 
-## Reading photos (Tesseract, free)
-- Nothing to sign up for. The English and Nepali language data is installed by `pnpm install`.
-- `EXTRACTION_MODE=tesseract` (default) reads real photos. `EXTRACTION_MODE=mock` returns three fake rooms.
-- `TESSERACT_LANGS=eng+nep` reads English and Nepali. Use `eng` for faster, slightly cleaner digits.
-- The first photo after the server starts takes a few seconds (Tesseract loads). Later photos are faster.
-- Works well on printed or neat block-letter lines such as `Hall 12.6 x 10.3 ft`. Cursive handwriting is not reliable.
-- Each line is read as: label, length x breadth, unit. `Passage 20.4` is a length only, and `Doors 3 nos` is a count.
-- Lines that are not measurements (totals, page numbers, dates) are skipped.
+## Run it on a VPS
+```
+pnpm install --prod=false && pnpm build
+NODE_ENV=production pnpm start          # or: pm2 start dist/index.js --name estimator
+```
+- Put nginx or Caddy in front for HTTPS (Android release builds block plain http). The server already
+  trusts one proxy hop. Keep port 3000 closed to the internet.
+- Photos go to `UPLOAD_DIR` (default `./uploads`), as `<userId>/<estimateId>/<uuid>.jpg`.
+  Use an absolute path in production and include it in your backups. It is not served over HTTP.
+- Tesseract needs a few hundred MB of free RAM. The first photo after a start takes a few seconds.
+
+## Reading photos
+- Works best on printed or neat block-letter lines such as `Hall 12.6 x 10.3 ft`, in even light.
+  Tilt, shadows and blur are corrected. Cursive handwriting is not reliable.
+- Every line carries Tesseract's confidence. Lines it is unsure about are still counted, but are
+  returned as `warnings` (and `check: true` on the line) so the app can ask the user to double-check.
+- Lines that cannot be priced go to `invalid` with a reason. Nothing is dropped or guessed.
+- `EXTRACTION_MODE=mock` returns three fake rooms for testing without a photo.
 
 ## Two calculation modes (sent with `calculate`)
 - `decimal` (normal): `10.5` means 10.5 ft.
-- `feet_inches`: the digits after the dot are inches. `10.8` = 10 ft 8 in, `10.1` = 10 ft 1 in,
+- `feet_inches`: the digits after the dot are inches: `10.8` = 10 ft 8 in, `10.1` = 10 ft 1 in,
   `10.10` = 10 ft 10 in. More than 11 inches is reported as `INVALID_DIMENSION`.
-- Written notation such as `14'6"` or `14-6` is always read as feet and inches, in both modes.
+- Written notation such as `14'6"` or `14-6` is always read as feet and inches. Metres are decimal.
 
-## Endpoints (base /api/v1, all except auth need a Bearer token)
+## How money is calculated
+quantity (sq ft, ft or pieces) x rate, rounded once per line to 2 decimals (half up).
+Subtotal = sum of the rounded lines. Grand total = sum of the subtotals. Sizes are kept as exact
+fractions and divided once at the end, so there is no rounding drift. A side longer than 500 ft is
+reported as `DIMENSION_TOO_LARGE` (almost always a missing decimal point).
+
+## Endpoints (base /api/v1; all except auth and /health need a Bearer token)
 POST /auth/register, POST /auth/login, GET /users/me,
 POST /projects, GET /projects, GET /projects/:id,
 POST /projects/:id/estimates/extract  (multipart: image, categoryKey, optional estimateId),
@@ -36,7 +50,3 @@ POST /estimates/:id/calculate  (body: { mode?, rates: { <workKey>: { value, per,
 POST /estimates/:id/confirm
 
 Success: `{ "data": ... }`. Error: `{ "error": { "code", "message", "details?" } }`.
-
-## Production
-Set `NODE_ENV=production`, then generate the first migration once against an empty database:
-`pnpm migration:generate src/migrations/Init` and `pnpm migration:run`.
