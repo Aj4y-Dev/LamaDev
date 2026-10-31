@@ -46,6 +46,7 @@ export function ReportView({
                 <View style={{ flex: 1 }}>
                   <AppText>{i.label}</AppText>
                   <AppText variant="caption" muted>
+                    {i.size ? `${i.size} · ` : ""}
                     {formatNumber(i.qty)} {i.unit}
                   </AppText>
                 </View>
