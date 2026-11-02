@@ -14,6 +14,11 @@ export const estimatesApi = {
       timeoutMs: 60_000,
       signal,
     }),
+  create: (projectId: string) =>
+    request<{ id: string; items: EstimateItem[] }>(
+      `/projects/${projectId}/estimates`,
+      { method: "POST", body: {} },
+    ),
   putItems: (id: string, items: EstimateItem[]) =>
     request<unknown>(`/estimates/${id}/items`, {
       method: "PUT",

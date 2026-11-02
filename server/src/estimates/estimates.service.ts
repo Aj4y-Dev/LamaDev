@@ -4,7 +4,7 @@ import { Db, one, pool, rows, tx } from '../db';
 import { readItems } from '../extraction/extraction.service';
 import { compressImage } from '../extraction/image';
 import type { ItemReader } from '../extraction/item-reader';
-import { normalizeDimensionText, normalizeExtractedItem, normalizeLabel } from '../extraction/normalizer';
+import { normalizeDimensionText, normalizeExprText, normalizeExtractedItem, normalizeLabel } from '../extraction/normalizer';
 import type { LocalPhotoStore } from '../extraction/storage';
 import { D } from '../lib/decimal';
 import { badRequest, conflict, notFound, unprocessable } from '../lib/errors';
@@ -29,12 +29,14 @@ interface ItemRow {
   breadth: string | null;
   count: number | null;
   unit: Unit;
+  expr: string | null;
+  written: string | null;
   uncertain: boolean;
   sort_index: number;
 }
 
 const itemView = (i: ItemRow) => ({
-  id: i.id, categoryKey: i.category_key, label: i.label, length: i.length ?? '', breadth: i.breadth, count: i.count, unit: i.unit, uncertain: i.uncertain,
+  id: i.id, categoryKey: i.category_key, label: i.label, length: i.length ?? '', breadth: i.breadth, count: i.count, unit: i.unit, expr: i.expr, written: i.written, uncertain: i.uncertain,
 });
 
 export interface Deps {
@@ -63,7 +65,7 @@ const toCalcRates = (stored: Record<string, RateInput>): Record<string, CalcRate
 async function run(db: Db, id: string, rates: Record<string, RateInput>, mode: CalcMode): Promise<CalcResult> {
   const items = await rows<ItemRow>(db, 'select * from estimate_items where estimate_id = $1 order by sort_index', [id]);
   const calcItems: CalcItem[] = items.map((r) => ({
-    id: r.id, categoryKey: r.category_key, label: r.label, length: r.length, breadth: r.breadth, count: r.count, unit: r.unit, uncertain: r.uncertain,
+    id: r.id, categoryKey: r.category_key, label: r.label, length: r.length, breadth: r.breadth, count: r.count, unit: r.unit, expr: r.expr, written: r.written, uncertain: r.uncertain,
   }));
   return calculate(calcItems, toCalcRates(rates), mode);
 }
@@ -77,8 +79,8 @@ export async function extractFromPhoto(
   await assertProjectOwned(userId, projectId);
 
   const jpeg = await compressImage(file.buffer);
-  const raw = await readItems(deps.reader, jpeg, log.warn);
-  const drafts = raw.map((r) => normalizeExtractedItem(r, fields.categoryKey));
+  const read = await readItems(deps.reader, jpeg, log.warn);
+  const drafts = read.items.map((r) => normalizeExtractedItem(r, fields.categoryKey));
 
   const saved = await tx(async (c: PoolClient) => {
     let estimateId: string;
@@ -97,9 +99,9 @@ export async function extractFromPhoto(
       const d = drafts[i];
       const r = await one<ItemRow>(
         c,
-        `insert into estimate_items (estimate_id, category_key, label, length, breadth, count, unit, uncertain, sort_index)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-        [estimateId, d.categoryKey, d.label, d.length, d.breadth, d.count, d.unit, d.uncertain, start + i],
+        `insert into estimate_items (estimate_id, category_key, label, length, breadth, count, unit, expr, written, uncertain, sort_index)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
+        [estimateId, d.categoryKey, d.label, d.length, d.breadth, d.count, d.unit, d.expr, d.written, d.uncertain, start + i],
       );
       out.push(r as ItemRow);
     }
@@ -113,7 +115,14 @@ export async function extractFromPhoto(
   } catch (err) {
     log.warn(`could not store the photo: ${err instanceof Error ? err.message : 'error'}`);
   }
-  return { id: saved.estimateId, items: saved.items.map(itemView) };
+  return { id: saved.estimateId, items: saved.items.map(itemView), skippedLines: read.skipped };
+}
+
+/** Starts an empty draft estimate, so lines can be typed in by hand when a photo cannot be read. */
+export async function createEstimate(userId: string, projectId: string) {
+  await assertProjectOwned(userId, projectId);
+  const e = await one<{ id: string }>(pool, 'insert into estimates (project_id) values ($1) returning id', [projectId]);
+  return { id: (e as { id: string }).id, items: [] as ReturnType<typeof itemView>[] };
 }
 
 // ---------- read ----------
@@ -131,6 +140,8 @@ export interface ItemInput {
   length?: string | null;
   breadth?: string | null;
   count?: number | null;
+  expr?: string | null;
+  written?: string | null;
   unit: Unit;
 }
 
@@ -144,23 +155,25 @@ export async function replaceItems(userId: string, id: string, items: ItemInput[
 
     for (let index = 0; index < items.length; index++) {
       const it = items[index];
-      const values = [it.categoryKey, normalizeLabel(it.label), normalizeDimensionText(it.length), normalizeDimensionText(it.breadth), it.count ?? null, it.unit, index];
+      const expr = normalizeExprText(it.expr);
+      const values = [it.categoryKey, normalizeLabel(it.label), normalizeDimensionText(it.length), normalizeDimensionText(it.breadth), it.count ?? null, it.unit, index, expr];
       if (it.id && existing.has(it.id)) {
         keep.push(it.id);
         out.push((await one<ItemRow>(
           c,
-          // The server keeps its own "unsure" flag. It is cleared only if a person changed the numbers.
+          // The server keeps its own "unsure" flag and the writer's result. They are cleared only if a person changed the line.
           `update estimate_items set category_key=$1, label=$2,
-             uncertain = case when length is distinct from $3 or breadth is distinct from $4 then false else uncertain end,
-             length=$3, breadth=$4, count=$5, unit=$6, sort_index=$7,
-             qty=null, rate_value=null, rate_type=null, amount=null where id=$8 and estimate_id=$9 returning *`,
+             uncertain = case when length is distinct from $3 or breadth is distinct from $4 or expr is distinct from $8 then false else uncertain end,
+             written = case when expr is distinct from $8 then null else written end,
+             length=$3, breadth=$4, count=$5, unit=$6, sort_index=$7, expr=$8,
+             qty=null, rate_value=null, rate_type=null, amount=null where id=$9 and estimate_id=$10 returning *`,
           [...values, it.id, id],
         )) as ItemRow);
       } else {
         const r = (await one<ItemRow>(
           c,
-          `insert into estimate_items (category_key, label, length, breadth, count, unit, sort_index, estimate_id)
-           values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+          `insert into estimate_items (category_key, label, length, breadth, count, unit, sort_index, expr, estimate_id)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
           [...values, id],
         )) as ItemRow;
         keep.push(r.id);

@@ -20,7 +20,9 @@ export interface PricingStrategy {
 
 /** Longest single side we accept. A bigger number is almost always a missing decimal point. */
 export const MAX_DIMENSION_FT = 500;
-const tooLarge = (r: Ratio) => r.n.gt(r.d.mul(MAX_DIMENSION_FT));
+export const tooLarge = (r: Ratio) => r.n.gt(r.d.mul(MAX_DIMENSION_FT));
+/** Largest single area line we accept (500 ft x 500 ft). */
+export const MAX_AREA_SQFT = MAX_DIMENSION_FT * MAX_DIMENSION_FT;
 const notPositive = (r: Ratio) => r.n.lte(0);
 const ONE = new D(1);
 

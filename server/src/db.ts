@@ -3,7 +3,8 @@ import { config } from './config';
 
 export const pool = new Pool({
   connectionString: config.DATABASE_URL,
-  ssl: config.DB_SSL === 'true' ? { rejectUnauthorized: true } : false,
+  // Leave ssl unset unless DB_SSL=true, so an sslmode in DATABASE_URL still works.
+  ssl: config.DB_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
 });
 
 export type Db = Pool | PoolClient;
@@ -54,10 +55,22 @@ create table if not exists estimate_items (
   sort_index integer not null default 0
 );
 alter table estimate_items add column if not exists uncertain boolean not null default false;
+alter table estimate_items add column if not exists expr varchar(120);
+alter table estimate_items add column if not exists written varchar(32);
 create index if not exists items_estimate_idx on estimate_items(estimate_id);
 `;
 
 export async function migrate(): Promise<void> {
+  // Databases used by the old NestJS version have the same table names with different column names.
+  const old = await pool.query(
+    `select 1 from information_schema.columns where table_name = 'projects' and column_name = 'userId' limit 1`,
+  );
+  if (old.rowCount) {
+    throw new Error(
+      'This database still has tables from the old NestJS version of the server. ' +
+        'Run "pnpm db:reset --yes" to delete them (this deletes ALL data in them), or point DATABASE_URL at a new empty database.',
+    );
+  }
   await pool.query(SCHEMA);
 }
 

@@ -42,10 +42,12 @@ export default function Result() {
   }
 
   const title = project.data?.title ?? t("common.appName");
-  const labelFor = (id: string) =>
-    entries
+  const lineName = (id: string) => {
+    const it = entries
       .flatMap((e) => e.photos.flatMap((p) => p.items ?? []))
-      .find((i) => i.id === id)?.label ?? id;
+      .find((i) => i.id === id);
+    return it?.expr?.trim() || it?.label?.trim() || "";
+  };
 
   const run = async (kind: "pdf" | "image") => {
     setBusy(kind);
@@ -73,7 +75,7 @@ export default function Result() {
   return (
     <Screen
       title={t("result.title")}
-      onBack={() => router.replace(confirmed ? "/" : "/estimate/build")}
+      onBack={() => router.replace(confirmed ? "/" : "/estimate/review")}
       footer={
         <>
           {exportError ? (
@@ -133,9 +135,9 @@ export default function Result() {
       {result.invalid.length > 0 ? (
         <Card accent="error">
           <AppText bold>{t("result.notCounted")}</AppText>
-          {result.invalid.map((i) => (
+          {result.invalid.map((i, n) => (
             <AppText key={i.id} muted>
-              {labelFor(i.id)}: {i.reason}
+              {lineName(i.id) || t("result.line", { n: n + 1 })}
             </AppText>
           ))}
           <AppText variant="label" muted>
@@ -146,7 +148,7 @@ export default function Result() {
               compact
               variant="secondary"
               title={t("result.editWork")}
-              onPress={() => router.replace("/estimate/build")}
+              onPress={() => router.replace("/estimate/review")}
             />
           ) : null}
         </Card>
@@ -158,14 +160,27 @@ export default function Result() {
           <AppText variant="label" muted>
             {t("result.checkHint")}
           </AppText>
-          {result.groups
-            .flatMap((g) => g.items)
-            .filter((l) => l.check)
-            .map((l) => (
-              <AppText key={l.id}>
-                {l.label || l.id}: {l.size}
+          {result.warnings?.map((w) => {
+            const line = result.groups
+              .flatMap((g) => g.items)
+              .find((l) => l.id === w.id);
+            return (
+              <AppText key={w.id}>
+                {line?.size || w.id}
+                {w.reason === "RESULT_MISMATCH"
+                  ? ` — ${t("result.mismatch", { written: w.written, computed: w.computed })}`
+                  : ""}
               </AppText>
-            ))}
+            );
+          })}
+          {!confirmed ? (
+            <Button
+              compact
+              variant="secondary"
+              title={t("result.editWork")}
+              onPress={() => router.replace("/estimate/review")}
+            />
+          ) : null}
         </Card>
       ) : null}
 
@@ -182,7 +197,7 @@ export default function Result() {
           variant="ghost"
           icon="create-outline"
           title={t("result.editWork")}
-          onPress={() => router.replace("/estimate/build")}
+          onPress={() => router.replace("/estimate/review")}
         />
       ) : null}
     </Screen>

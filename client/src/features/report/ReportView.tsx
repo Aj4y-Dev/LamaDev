@@ -14,7 +14,7 @@ interface Props {
   date: string;
 }
 
-/** The estimate sheet. This exact view is what "Save as image" captures. */
+/** The estimate sheet, laid out like the notebook answer: each line with its result, then the total area, the rate and the amount. */
 export function ReportView({
   viewRef,
   result,
@@ -35,28 +35,39 @@ export function ReportView({
 
       {result.groups.map((g) => {
         const label = i18n.language === "ne" && g.labelNe ? g.labelNe : g.label;
+        const unit = t(`result.unit.${g.unit ?? "sqft"}`, {
+          defaultValue: g.unit ?? "",
+        });
         return (
           <View key={g.categoryKey} style={styles.group}>
-            <AppText bold>{label}</AppText>
-            <AppText variant="label" muted>
-              {formatRs(g.rate.value)} {t(`result.per.${g.rate.per}`)}
+            <AppText variant="title" bold>
+              {label}
             </AppText>
-            {g.items.map((i) => (
+
+            {g.items.map((i, n) => (
               <View key={i.id} style={styles.line}>
-                <View style={{ flex: 1 }}>
-                  <AppText>{i.label}</AppText>
-                  <AppText variant="caption" muted>
-                    {i.size ? `${i.size} · ` : ""}
-                    {formatNumber(i.qty)} {i.unit}
-                  </AppText>
-                </View>
-                <AppText>{formatRs(i.amount)}</AppText>
+                <AppText style={{ flex: 1 }}>
+                  {i.size || i.label || t("result.line", { n: n + 1 })}
+                  {i.check ? " *" : ""}
+                </AppText>
+                <AppText>= {formatNumber(i.qty)}</AppText>
               </View>
             ))}
-            <View style={[styles.line, styles.sub]}>
-              <AppText variant="label" muted>
-                {t("result.subtotal")}
+
+            <View style={[styles.line, styles.sum]}>
+              <AppText bold>{t("result.totalArea")}</AppText>
+              <AppText bold>
+                {g.totalQty ? formatNumber(g.totalQty) : ""} {unit}
               </AppText>
+            </View>
+            <View style={styles.line}>
+              <AppText muted>{t("result.rate")}</AppText>
+              <AppText>
+                {formatRs(g.rate.value)} {t(`result.per.${g.rate.per}`)}
+              </AppText>
+            </View>
+            <View style={styles.line}>
+              <AppText bold>{t("result.amount")}</AppText>
               <AppText bold>{formatRs(g.subtotal)}</AppText>
             </View>
           </View>
@@ -71,6 +82,11 @@ export function ReportView({
           {formatRs(result.grandTotal)}
         </AppText>
       </View>
+      {result.groups.some((g) => g.items.some((i) => i.check)) ? (
+        <AppText variant="caption" muted>
+          {t("result.checkNote")}
+        </AppText>
+      ) : null}
       <AppText variant="caption" muted>
         {t("report.footer")}
       </AppText>
@@ -99,9 +115,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.xs,
   },
-  sub: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+  sum: {
+    borderTopWidth: 2,
+    borderTopColor: colors.text,
     marginTop: spacing.xs,
     paddingTop: spacing.sm,
   },

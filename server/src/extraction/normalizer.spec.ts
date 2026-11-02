@@ -1,4 +1,4 @@
-import { normalizeCount, normalizeDimensionText, normalizeExtractedItem, normalizeLabel, normalizeUnit, toAsciiDigits } from './normalizer';
+import { normalizeCount, normalizeDimensionText, normalizeExprText, normalizeExtractedItem, normalizeLabel, normalizeUnit, toAsciiDigits } from './normalizer';
 
 describe('normalizer', () => {
   it('converts Nepali digits', () => expect(toAsciiDigits('१०.८')).toBe('10.8'));
@@ -22,7 +22,13 @@ describe('normalizer', () => {
   });
   it('builds a draft item for the chosen work type', () => {
     expect(normalizeExtractedItem({ label: 'Hall', length: 10.8, breadth: '9.6', unit: 'ft' }, 'tiles')).toEqual({
-      categoryKey: 'tiles', label: 'Hall', length: '10.8', breadth: '9.6', count: null, unit: 'ft', uncertain: false,
+      categoryKey: 'tiles', label: 'Hall', length: '10.8', breadth: '9.6', count: null, unit: 'ft', expr: null, written: null, uncertain: false,
     });
+  });
+  it('tidies an expression line', () => {
+    expect(normalizeExprText('१३ X ११.९')).toBe('13 x 11.9');
+    expect(normalizeExprText('119.6  +  16.5')).toBe('119.6 + 16.5');
+    expect(normalizeExprText('  ')).toBeNull();
+    expect(normalizeExprText(null)).toBeNull();
   });
 });

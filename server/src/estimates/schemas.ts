@@ -15,6 +15,8 @@ const itemSchema = z.object({
   length: z.string().max(32).nullish(),
   breadth: z.string().max(32).nullish(),
   count: z.number().int().min(0).max(1_000_000).nullish(),
+  expr: z.string().max(120).nullish(), // the line as written, e.g. "13 x 11.9"
+  written: z.string().max(32).nullish(),
   unit: z.enum(UNITS),
   uncertain: z.boolean().optional(), // sent back by the app; the server keeps its own value
 }).strict();

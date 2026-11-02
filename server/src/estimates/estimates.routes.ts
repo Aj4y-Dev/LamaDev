@@ -25,6 +25,10 @@ export function estimatesRouter(deps: service.Deps): Router {
     ok(res, await service.extractFromPhoto(deps, userOf(req).id, projectId, req.file, fields), 201);
   });
 
+  r.post('/projects/:id/estimates', async (req, res) => {
+    ok(res, await service.createEstimate(userOf(req).id, parse(uuidSchema, req.params.id)), 201);
+  });
+
   r.get('/estimates/:id', async (req, res) => {
     ok(res, await service.getEstimate(userOf(req).id, parse(uuidSchema, req.params.id)));
   });

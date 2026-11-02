@@ -51,7 +51,7 @@ describe('parseDimension', () => {
 describe('calculate: worked examples', () => {
   it('14.5 x 4.5 x 15 = 978.75 exactly (no float drift)', () => {
     const r = calculate([item({ length: '14.5', breadth: '4.5' })], { tiles: rate('15', 'area') }, 'decimal');
-    expect(r.groups[0].items[0].qty).toBe('65.250');
+    expect(r.groups[0].items[0].qty).toBe('65.25');
     expect(r.groups[0].items[0].amount).toBe('978.75');
     expect(r.grandTotal).toBe('978.75');
   });
@@ -69,14 +69,15 @@ describe('calculate: worked examples', () => {
     expect(a.grandTotal).toBe('106.00');
     expect(b.grandTotal).toBe('105.00');
   });
-  it('rounds each line half-up at 2 decimals, and totals the rounded lines', () => {
+  it('rounds the group amount ONCE (total quantity x rate), half up; a line shown alone is informational', () => {
     const r = calculate(
       [item({ id: '1', length: '0.125', breadth: '1' }), item({ id: '2', length: '0.125', breadth: '1' })],
       { tiles: rate('1', 'area') }, 'decimal',
     );
-    expect(r.groups[0].items.map((l) => l.amount)).toEqual(['0.13', '0.13']);
-    expect(r.groups[0].subtotal).toBe('0.26');
-    expect(r.grandTotal).toBe('0.26');
+    expect(r.groups[0].totalQty).toBe('0.25');
+    expect(r.groups[0].items.map((l) => l.amount)).toEqual(['0.13', '0.13']); // each alone: 0.125 -> 0.13
+    expect(r.groups[0].subtotal).toBe('0.25'); // but together: 0.25 x 1
+    expect(r.grandTotal).toBe('0.25');
   });
   it('length and count strategies', () => {
     const r = calculate(

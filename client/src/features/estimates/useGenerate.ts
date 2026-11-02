@@ -1,32 +1,50 @@
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import { estimatesApi } from "@/api/estimates.api";
 import type { EstimateItem, RateOverride } from "@/api/types";
 import { compressForUpload } from "@/lib/image";
 import { useDraftStore } from "./draftStore";
 import { useResultStore } from "./resultStore";
 
-export type GenerateProgress =
-  | { step: "reading"; current: number; total: number }
-  | { step: "calculating" }
-  | null;
+export type GenerateProgress = {
+  step: "reading";
+  current: number;
+  total: number;
+} | null;
 
-export function useGenerate() {
+/**
+ * Step 1: read every photo that has not been read yet. A photo that cannot be read is NOT an error:
+ * it just has no lines, and the person types them in on the next screen.
+ */
+export function useReadPhotos() {
   const [progress, setProgress] = useState<GenerateProgress>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const draft = useDraftStore.getState();
-      const projectId = draft.projectId;
+      const projectId = useDraftStore.getState().projectId;
       if (!projectId) throw new Error("No project");
 
-      // Only photos that have not been read yet are uploaded, so retrying never re-uploads finished ones.
-      const pending = draft.entries.flatMap((entry) =>
-        entry.photos
-          .filter((p) => p.items === null)
-          .map((photo) => ({ entry, photo })),
-      );
+      const pending = useDraftStore
+        .getState()
+        .entries.flatMap((entry) =>
+          entry.photos
+            .filter((p) => p.items === null)
+            .map((photo) => ({ entry, photo })),
+        );
+      setProgress({
+        step: "reading",
+        current: 1,
+        total: Math.max(pending.length, 1),
+      });
+
+      // One estimate for the whole job. It also exists when no photo can be read.
+      let estimateId = useDraftStore.getState().estimateId;
+      if (!estimateId) {
+        estimateId = (await estimatesApi.create(projectId)).id;
+        useDraftStore.getState().setEstimateId(estimateId);
+      }
 
       let n = 0;
       for (const { entry, photo } of pending) {
@@ -45,29 +63,54 @@ export function useGenerate() {
           type: "image/jpeg",
         } as unknown as Blob);
         form.append("categoryKey", entry.key);
-        const existing = useDraftStore.getState().estimateId;
-        if (existing) form.append("estimateId", existing);
+        form.append("estimateId", estimateId);
         abortRef.current = new AbortController();
-        const res = await estimatesApi.extract(
-          projectId,
-          form,
-          abortRef.current.signal,
-        );
-        useDraftStore.getState().setEstimateId(res.id);
-        useDraftStore.getState().setPhotoItems(entry.key, photo.key, res.items);
+        try {
+          const res = await estimatesApi.extract(
+            projectId,
+            form,
+            abortRef.current.signal,
+          );
+          useDraftStore
+            .getState()
+            .setPhotoItems(
+              entry.key,
+              photo.key,
+              res.items,
+              res.skippedLines ?? 0,
+            );
+        } catch (err) {
+          if (err instanceof ApiError && err.code === "EXTRACTION_FAILED") {
+            useDraftStore.getState().setPhotoItems(entry.key, photo.key, [], 0);
+            continue;
+          }
+          throw err;
+        }
       }
+      return estimateId;
+    },
+    onSettled: () => setProgress(null),
+  });
 
-      setProgress({ step: "calculating" });
-      const { estimateId, entries } = useDraftStore.getState();
+  return { ...mutation, progress, cancel: () => abortRef.current?.abort() };
+}
+
+/** Step 2: save the checked lines and calculate. */
+export function useCalculate() {
+  return useMutation({
+    mutationFn: async () => {
+      const { estimateId, projectId, entries, mode } = useDraftStore.getState();
       if (!estimateId) throw new Error("No estimate");
 
       const items: EstimateItem[] = entries.flatMap((e) =>
         e.photos.flatMap((p) =>
-          (p.items ?? []).map((i) => ({
-            ...i,
-            categoryKey: e.key,
-            breadth: i.breadth ? i.breadth : null,
-          })),
+          (p.items ?? [])
+            .filter((i) => (i.expr ?? "").trim() !== "")
+            .map((i) => ({
+              ...i,
+              categoryKey: e.key,
+              breadth: i.breadth ? i.breadth : null,
+            })),
         ),
       );
       const rates: Record<string, RateOverride> = {};
@@ -75,14 +118,11 @@ export function useGenerate() {
         rates[e.key] = { value: e.rate, per: e.per, label: e.workName };
 
       await estimatesApi.putItems(estimateId, items);
-      const result = await estimatesApi.calculate(estimateId, { rates });
+      const result = await estimatesApi.calculate(estimateId, { mode, rates });
       useResultStore.getState().set({ estimateId, projectId, result });
       return result;
     },
-    onSettled: () => setProgress(null),
   });
-
-  return { ...mutation, progress, cancel: () => abortRef.current?.abort() };
 }
 
 export function useConfirmEstimate() {
