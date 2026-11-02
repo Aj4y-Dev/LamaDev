@@ -1,5 +1,7 @@
 export type Unit = "ft" | "m";
 export type RateType = "area" | "length" | "count";
+/** decimal: 10.5 means 10.5 ft. feet_inches: the digits after the dot are inches (10.8 = 10 ft 8 in). */
+export type CalcMode = "decimal" | "feet_inches";
 
 export interface User {
   id: string;
@@ -28,11 +30,14 @@ export interface EstimateItem {
   breadth?: string | null;
   count?: number | null;
   uncertain?: boolean;
+  expr?: string | null;
+  written?: string | null;
   unit: Unit;
 }
 
 export interface ExtractResponse {
   id: string;
+  skippedLines?: number;
   items: EstimateItem[];
 }
 
@@ -42,6 +47,7 @@ export interface RateOverride {
   label?: string;
 }
 export interface CalculateRequest {
+  mode?: CalcMode;
   rates?: Record<string, RateOverride>;
 }
 
@@ -67,6 +73,8 @@ export interface ResultGroupData {
   label: string;
   labelNe: string;
   rate: { value: string; per: RateType };
+  totalQty?: string;
+  unit?: string;
   items: ResultItem[];
   subtotal: string;
 }
@@ -75,5 +83,10 @@ export interface CalculateResponse {
   invalid: { id: string; reason: string }[];
   grandTotal: string;
   currency: "NPR";
-  warnings?: { id: string; reason: string }[];
+  warnings?: {
+    id: string;
+    reason: string;
+    written?: string;
+    computed?: string;
+  }[];
 }

@@ -102,6 +102,26 @@
     "noneHint": "Generate an estimate first.",
     "per": { "area": "per sq ft", "length": "per ft", "count": "per piece" }
   },
+  "review": {
+    "title": "Check the lines",
+    "subtitle": "Compare each line with your photo, fix anything wrong, then calculate.",
+    "help": "Write each line like your sheet: 13 x 11.9 for length times breadth, 35.6 for an area already worked out, 119.6 + 16.5 to add.",
+    "photo": "Photo {{n}}",
+    "tapToEnlarge": "Tap to enlarge",
+    "showPhoto": "Show photo",
+    "placeholder": "e.g. 13 x 11.9",
+    "line": "Line {{n}}",
+    "addLine": "Add a line",
+    "unsure": "Hard to read. Please check.",
+    "written": "Written result: {{value}}",
+    "skipped_one": "{{count}} line on this photo could not be read. Please add it.",
+    "skipped_other": "{{count}} lines on this photo could not be read. Please add them.",
+    "notRead": "This photo has not been read yet.",
+    "photoFailed": "We could not read this photo. Type the lines you see.",
+    "needLine": "Add at least one line.",
+    "calculate": "Calculate",
+    "empty": "Nothing to check yet."
+  },
   "report": {
     "client": "Client",
     "footer": "Estimate only. Actual cost may vary."

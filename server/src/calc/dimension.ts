@@ -23,6 +23,8 @@ export function parseDimension(raw: string | null | undefined, mode: CalcMode, u
   const s = (raw ?? '').trim();
   if (s === '') return { ok: false, reason: 'MISSING' };
 
+  if (s.replace(/\D/g, '').length > 12) return INVALID; // keeps the exact arithmetic exact
+
   const explicit = EXPLICIT.exec(s);
   if (explicit) {
     const inches = explicit[2] ? new D(explicit[2]) : new D(0);

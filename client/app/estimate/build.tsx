@@ -10,7 +10,7 @@ import { EmptyState, ErrorState } from "@/components/States";
 import { ApiError } from "@/api/client";
 import { EntryCard } from "@/features/estimates/EntryCard";
 import { useDraftStore } from "@/features/estimates/draftStore";
-import { useGenerate } from "@/features/estimates/useGenerate";
+import { useReadPhotos } from "@/features/estimates/useGenerate";
 import { useNetwork } from "@/hooks/useNetwork";
 import { colors, radii, spacing } from "@/theme/tokens";
 
@@ -23,7 +23,7 @@ export default function Build() {
   const router = useRouter();
   const { isOnline } = useNetwork();
   const entries = useDraftStore((s) => s.entries);
-  const generate = useGenerate();
+  const generate = useReadPhotos();
   const [deleteKey, setDeleteKey] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
 
@@ -49,7 +49,7 @@ export default function Build() {
 
   const run = () =>
     generate.mutate(undefined, {
-      onSuccess: () => router.replace("/estimate/result"),
+      onSuccess: () => router.push("/estimate/review"),
     });
   const canGenerate =
     entries.length > 0 &&
@@ -61,11 +61,9 @@ export default function Build() {
 
   if (generate.isPending) {
     const p = generate.progress;
-    const pct = !p
-      ? 0
-      : p.step === "calculating"
-        ? 100
-        : Math.round(((p.current - 1) / p.total) * 100);
+    const current = p?.current ?? 1;
+    const total = p?.total ?? 1;
+    const pct = Math.round(((current - 1) / total) * 100);
     return (
       <Screen
         title={t("estimate.title")}
@@ -81,9 +79,7 @@ export default function Build() {
         <View style={styles.loading} accessibilityLiveRegion="polite">
           <ActivityIndicator size="large" color={colors.primary} />
           <AppText variant="title" bold style={styles.center}>
-            {p?.step === "reading"
-              ? t("estimate.reading", { current: p.current, total: p.total })
-              : t("estimate.calculating")}
+            {t("estimate.reading", { current, total })}
           </AppText>
           <View style={styles.track}>
             <View style={[styles.fill, { width: `${pct}%` }]} />

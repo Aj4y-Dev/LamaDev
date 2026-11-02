@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import sharp from 'sharp';
 import { createWorker, OEM, PSM, Worker } from 'tesseract.js';
-import type { ItemReader } from './item-reader';
+import type { ItemReader, ReadResult } from './item-reader';
 import type { RawItem } from './normalizer';
 import { parseMeasurementLine } from './text-parser';
 
@@ -20,12 +20,15 @@ interface Attempt {
 }
 interface Scored {
   items: RawItem[];
+  skipped: number;
   unsure: number;
   confidence: number;
 }
 
 /** A line whose numbers Tesseract is less sure of than this (0-100) is flagged for a person to double-check. */
 export const UNSURE_BELOW = 80;
+/** A line whose numbers score below this is noise, not a measurement, and is dropped instead of flagged. */
+export const NOISE_BELOW = 45;
 /** Stop trying other cleanups once a try finds lines, none unsure, and the page confidence is at least this. */
 const GOOD_ENOUGH_CONFIDENCE = 80;
 
@@ -40,7 +43,7 @@ export class TesseractReader implements ItemReader {
 
   constructor(private readonly opts: TesseractOptions) {}
 
-  async read(image: Buffer): Promise<RawItem[]> {
+  async read(image: Buffer): Promise<ReadResult> {
     const { debug, log } = this.opts;
     if (debug) {
       const file = join(tmpdir(), 'ocr-input.jpg');
@@ -48,22 +51,23 @@ export class TesseractReader implements ItemReader {
       log(`Photo received (${Math.round(image.length / 1024)} KB). Saved to ${file} - open it to see what Tesseract sees`);
     }
 
-    let best: Scored = { items: [], unsure: 0, confidence: 0 };
+    let best: Scored = { items: [], skipped: 0, unsure: 0, confidence: 0 };
     for (const attempt of await this.attempts(image)) {
       const scored = await this.enqueue(() => this.recognize(attempt));
       if (debug) {
-        log(`OCR try "${attempt.name}": ${scored.items.length} lines, ${scored.unsure} unsure, confidence ${Math.round(scored.confidence)}\n` +
+        log(`OCR try "${attempt.name}": ${scored.items.length} lines, ${scored.skipped} unreadable, ${scored.unsure} unsure, confidence ${Math.round(scored.confidence)}\n` +
           scored.items.map((i) => `  ${i.label} | ${i.length} x ${i.breadth ?? '-'} | conf ${Math.round(i.confidence ?? 0)}`).join('\n'));
       }
       if (this.isBetter(scored, best)) best = scored;
       if (scored.items.length > 0 && scored.unsure === 0 && scored.confidence >= GOOD_ENOUGH_CONFIDENCE) break;
     }
-    return best.items;
+    return { items: best.items, skipped: best.skipped };
   }
 
   /** More lines first, then fewer unsure lines, then higher confidence. */
   private isBetter(a: Scored, b: Scored): boolean {
     if (a.items.length !== b.items.length) return a.items.length > b.items.length;
+    if (a.skipped !== b.skipped) return a.skipped < b.skipped;
     if (a.unsure !== b.unsure) return a.unsure < b.unsure;
     return a.confidence > b.confidence;
   }
@@ -75,22 +79,31 @@ export class TesseractReader implements ItemReader {
 
     const lines = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines));
     const items: RawItem[] = [];
+    let skipped = 0; // lines with digits that we could not turn into a measurement: the user must add these by hand
     if (lines.length > 0) {
       for (const line of lines) {
         const item = parseMeasurementLine(line.text);
-        if (!item) continue;
+        if (!item) {
+          if (/\d/.test(line.text)) skipped++;
+          continue;
+        }
         // Confidence of the weakest number on this line.
         const numbers = line.words.filter((w) => /\d/.test(w.text));
         const confidence = numbers.length ? Math.min(...numbers.map((w) => w.confidence)) : line.confidence;
+        if (confidence < NOISE_BELOW) {
+          skipped++;
+          continue;
+        }
         items.push({ ...item, confidence, uncertain: confidence < UNSURE_BELOW });
       }
     } else {
       for (const text of data.text.split(/\r?\n/)) {
         const item = parseMeasurementLine(text);
         if (item) items.push({ ...item, confidence: data.confidence, uncertain: data.confidence < UNSURE_BELOW });
+        else if (/\d/.test(text)) skipped++;
       }
     }
-    return { items, unsure: items.filter((i) => i.uncertain).length, confidence: data.confidence };
+    return { items, skipped, unsure: items.filter((i) => i.uncertain).length, confidence: data.confidence };
   }
 
   async close(): Promise<void> {
@@ -151,7 +164,10 @@ export class TesseractReader implements ItemReader {
     return bestAngle;
   }
 
-  private async attempts(image: Buffer): Promise<Attempt[]> {
+  private async attempts(original: Buffer): Promise<Attempt[]> {
+    // Small pictures (screenshots) have digits too tiny to read: enlarge them first.
+    const width = (await sharp(original).metadata()).width ?? 0;
+    const image = width > 0 && width < 1000 ? await sharp(original).resize({ width: width * 3, kernel: 'lanczos3' }).toBuffer() : original;
     const flat = await this.flattenLight(image);
     const angle = await this.skewAngle(flat);
     const straight = Math.abs(angle) >= 0.5 ? await sharp(flat).rotate(angle, { background: '#ffffff' }).png().toBuffer() : flat;
@@ -165,6 +181,7 @@ export class TesseractReader implements ItemReader {
       { name: 'straightened, enlarged and sharpened / auto layout', buffer: bigger, psm: PSM.AUTO },
       { name: 'straightened, black and white / scattered text', buffer: bw, psm: PSM.SPARSE_TEXT },
       { name: 'plain gray / auto layout', buffer: plain, psm: PSM.AUTO },
+      { name: 'plain gray / scattered text', buffer: plain, psm: PSM.SPARSE_TEXT },
     ];
   }
 
