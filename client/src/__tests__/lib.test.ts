@@ -28,4 +28,19 @@ describe('buildReportHtml', () => {
   it('keeps server order and total', () => { expect(html.indexOf('Beta')).toBeLessThan(html.indexOf('Alpha')); expect(html).toContain('Rs 300.00'); });
   it('escapes HTML', () => { expect(html).toContain('Beta &lt;b&gt;'); expect(html).not.toContain('Beta <b>'); });
   it('switches labels by language', () => { expect(buildReportHtml(result, { language: 'ne', projectTitle: 'x', date: 'd' })).toContain('अल्फा'); });
+  it('keeps the item label and amount on every row', () => {
+    expect(html).toContain('Room');
+    expect(html).toContain('Hall');
+    expect(html).toContain('Rs 100.00');
+    expect(html).toContain('Rs 200.00');
+  });
+  it('shows the measured size next to qty when the server sends one', () => {
+    const withSize: CalculateResponse = {
+      ...result,
+      groups: [{ ...result.groups[0], items: [{ ...result.groups[0].items[0], size: '12.6 × 10.3 ft' }] }],
+    };
+    const out = buildReportHtml(withSize, { language: 'en', projectTitle: 'Site', date: '2026-10-27' });
+    expect(out).toContain('12.6 × 10.3 ft');
+    expect(out).toContain('Room');
+  });
 });

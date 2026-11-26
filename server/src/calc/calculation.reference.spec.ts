@@ -87,8 +87,11 @@ describe('calculation vs independent exact reference', () => {
           const r = rateRaw[it.categoryKey];
           let qty: Rat;
           if (r.per === 'area') {
-            if (it.breadth === null) { expectedInvalid.push(it.id); continue; }
-            qty = mul(refFeet(it.length as string, mode, it.unit), refFeet(it.breadth, mode, it.unit));
+            // No breadth means the written number is already the area (a known total, not a length
+            // waiting for a second dimension), so it is used directly rather than rejected.
+            qty = it.breadth === null
+              ? refFeet(it.length as string, mode, it.unit)
+              : mul(refFeet(it.length as string, mode, it.unit), refFeet(it.breadth, mode, it.unit));
           } else if (r.per === 'length') {
             qty = refFeet(it.length as string, mode, it.unit);
           } else {

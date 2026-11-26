@@ -24,7 +24,11 @@ export function createApp(deps: Deps): express.Express {
   app.use((req, res, next) => {
     const id = randomUUID().slice(0, 8);
     const started = Date.now();
-    res.on('finish', () => log.info(`${id} ${req.method} ${req.path} ${res.statusCode} ${Date.now() - started}ms`));
+    // Snapshot now: a mounted router rewrites req.url while matching and only restores it via next(),
+    // which a successful handler never calls (it responds directly), so reading req.path lazily in the
+    // 'finish' callback below would show whatever prefix the deepest router had already stripped.
+    const { method, path } = req;
+    res.on('finish', () => log.info(`${id} ${method} ${path} ${res.statusCode} ${Date.now() - started}ms`));
     next();
   });
 

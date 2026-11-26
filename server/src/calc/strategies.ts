@@ -29,17 +29,22 @@ const areaStrategy: PricingStrategy = {
   unitLabel: 'sqft',
   needsLength: true,
   needsBreadth: true,
+  // A line with no breadth is not an incomplete entry: a contractor sometimes already knows a
+  // room's total square footage and writes that number alone instead of two dimensions to multiply.
+  // That single number IS the area, so it is priced as-is rather than rejected as MISSING_BREADTH.
   validate(i) {
     if (!i.lengthFt) return 'MISSING_LENGTH';
-    if (!i.breadthFt) return 'MISSING_BREADTH';
-    if (notPositive(i.lengthFt) || notPositive(i.breadthFt)) return 'INVALID_DIMENSION';
-    if (tooLarge(i.lengthFt) || tooLarge(i.breadthFt)) return 'DIMENSION_TOO_LARGE';
+    if (notPositive(i.lengthFt)) return 'INVALID_DIMENSION';
+    if (tooLarge(i.lengthFt)) return 'DIMENSION_TOO_LARGE';
+    if (i.breadthFt && (notPositive(i.breadthFt) || tooLarge(i.breadthFt))) {
+      return notPositive(i.breadthFt) ? 'INVALID_DIMENSION' : 'DIMENSION_TOO_LARGE';
+    }
     return null;
   },
   quantity: (i) => {
-    const l = i.lengthFt ?? { n: new D(0), d: ONE };
-    const b = i.breadthFt ?? { n: new D(0), d: ONE };
-    return { n: l.n.mul(b.n), d: l.d.mul(b.d) };
+    const l = i.lengthFt as Ratio;
+    if (!i.breadthFt) return l;
+    return { n: l.n.mul(i.breadthFt.n), d: l.d.mul(i.breadthFt.d) };
   },
 };
 

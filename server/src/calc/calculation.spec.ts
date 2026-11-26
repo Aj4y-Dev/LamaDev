@@ -108,6 +108,11 @@ describe('calculate: worked examples', () => {
     expect(calculate([item({ length: '10.8', breadth: '9.6' })], { tiles: rate('10', 'area') }, 'feet_inches').groups[0].items[0].size).toBe('10.8 × 9.6');
     expect(calculate([item({ length: '3', breadth: '2', unit: 'm' })], { tiles: rate('10', 'area') }, 'decimal').groups[0].items[0].size).toBe('3 × 2 m');
   });
+  it('an area line with only one number is already the area, not a length waiting for a breadth', () => {
+    const r = calculate([item({ length: '29', breadth: null })], { tiles: rate('40', 'area') }, 'decimal');
+    expect(r.groups[0].items[0].qty).toBe('29.000');
+    expect(r.grandTotal).toBe('1160.00');
+  });
 });
 
 describe('calculate: bad lines are reported, never dropped or guessed', () => {
@@ -116,7 +121,6 @@ describe('calculate: bad lines are reported, never dropped or guessed', () => {
       [
         item({ id: 'u', categoryKey: 'unknown' }),
         item({ id: 'n', categoryKey: 'nothing' }),
-        item({ id: 'b', breadth: null }),
         item({ id: 'l', length: null }),
         item({ id: 'z', length: '0' }),
         item({ id: 'x', length: '10.12' }),
@@ -126,7 +130,7 @@ describe('calculate: bad lines are reported, never dropped or guessed', () => {
       { tiles: rate('10', 'area') }, 'feet_inches',
     );
     expect(Object.fromEntries(r.invalid.map((i) => [i.id, i.reason]))).toEqual({
-      u: 'UNKNOWN_CATEGORY', n: 'NO_RATE', b: 'MISSING_BREADTH', l: 'MISSING_LENGTH', z: 'INVALID_DIMENSION',
+      u: 'UNKNOWN_CATEGORY', n: 'NO_RATE', l: 'MISSING_LENGTH', z: 'INVALID_DIMENSION',
       x: 'INVALID_DIMENSION', big: 'DIMENSION_TOO_LARGE', junk: 'INVALID_DIMENSION',
     });
     expect(r.groups).toHaveLength(0);
@@ -139,9 +143,9 @@ describe('calculate: bad lines are reported, never dropped or guessed', () => {
     expect(calculate([item({ categoryKey: 'doors', count: 0 })], { doors: rate('5', 'count') }, 'decimal').invalid[0].reason).toBe('INVALID_COUNT');
   });
   it('good lines are still counted when others are bad', () => {
-    const r = calculate([item({ id: 'ok' }), item({ id: 'bad', breadth: null })], { tiles: rate('1', 'area') }, 'decimal');
+    const r = calculate([item({ id: 'ok' }), item({ id: 'bad', length: null })], { tiles: rate('1', 'area') }, 'decimal');
     expect(r.grandTotal).toBe('100.00');
-    expect(r.invalid).toEqual([{ id: 'bad', reason: 'MISSING_BREADTH' }]);
+    expect(r.invalid).toEqual([{ id: 'bad', reason: 'MISSING_LENGTH' }]);
   });
   it('a length rate ignores a junk breadth, an area rate does not', () => {
     expect(calculate([item({ breadth: 'abc' })], { tiles: rate('1', 'length') }, 'decimal').grandTotal).toBe('10.00');
@@ -159,8 +163,8 @@ describe('calculate: lines the photo reader was unsure about', () => {
     expect(r.groups[0].items.map((l) => l.check)).toEqual([false, true]);
   });
   it('a line that cannot be priced is invalid, not a warning', () => {
-    const r = calculate([item({ id: 'x', uncertain: true, breadth: null })], { tiles: rate('1', 'area') }, 'decimal');
-    expect(r.invalid).toEqual([{ id: 'x', reason: 'MISSING_BREADTH' }]);
+    const r = calculate([item({ id: 'x', uncertain: true, length: null })], { tiles: rate('1', 'area') }, 'decimal');
+    expect(r.invalid).toEqual([{ id: 'x', reason: 'MISSING_LENGTH' }]);
     expect(r.warnings).toEqual([]);
   });
   it('no warnings when nothing is unsure', () => {

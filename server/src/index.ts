@@ -1,19 +1,33 @@
 import { createApp } from './app';
 import { config } from './config';
 import { migrate, pool } from './db';
+import { ClaudeVisionReader } from './extraction/claude-vision-reader';
+import { GeminiVisionReader } from './extraction/gemini-vision-reader';
 import { MockReader } from './extraction/mock-reader';
 import { LocalPhotoStore } from './extraction/storage';
 import { TesseractReader } from './extraction/tesseract-reader';
 import type { ItemReader } from './extraction/item-reader';
 import { log } from './log';
 
+function makeReader(): ItemReader & { close?: () => Promise<void> } {
+  switch (config.EXTRACTION_MODE) {
+    case 'mock':
+      return new MockReader();
+    case 'claude':
+      // ANTHROPIC_API_KEY is guaranteed present here: config.ts refuses to start otherwise.
+      return new ClaudeVisionReader({ apiKey: config.ANTHROPIC_API_KEY as string, model: config.ANTHROPIC_MODEL });
+    case 'gemini':
+      // GEMINI_API_KEY is guaranteed present here: config.ts refuses to start otherwise.
+      return new GeminiVisionReader({ apiKey: config.GEMINI_API_KEY as string, model: config.GEMINI_MODEL });
+    case 'tesseract':
+      return new TesseractReader({ languages: config.TESSERACT_LANGS.split('+').map((l) => l.trim()).filter(Boolean), debug: config.OCR_DEBUG === 'true', log: log.info });
+  }
+}
+
 async function main(): Promise<void> {
   await migrate();
 
-  const reader: ItemReader & { close?: () => Promise<void> } =
-    config.EXTRACTION_MODE === 'mock'
-      ? new MockReader()
-      : new TesseractReader({ languages: config.TESSERACT_LANGS.split('+').map((l) => l.trim()).filter(Boolean), debug: config.OCR_DEBUG === 'true', log: log.info });
+  const reader = makeReader();
   const photos = new LocalPhotoStore(config.UPLOAD_DIR);
 
   const server = createApp({ reader, photos }).listen(config.PORT, '0.0.0.0', () => {

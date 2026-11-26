@@ -1,5 +1,6 @@
 import { readItems } from './extraction.service';
 import type { ItemReader } from './item-reader';
+import { RateLimitedError } from './rate-limit-error';
 
 const reader = (...answers: (object[] | Error)[]): ItemReader => {
   let i = 0;
@@ -24,5 +25,11 @@ describe('readItems', () => {
   });
   it('gives EXTRACTION_FAILED when the reader keeps crashing', async () => {
     await expect(readItems(reader(new Error('boom')), Buffer.alloc(1))).rejects.toMatchObject({ code: 'EXTRACTION_FAILED' });
+  });
+  it('gives RATE_LIMITED immediately on a RateLimitedError, without retrying', async () => {
+    let calls = 0;
+    const r: ItemReader = { read: async () => { calls++; throw new RateLimitedError('slow down'); } };
+    await expect(readItems(r, Buffer.alloc(1))).rejects.toMatchObject({ code: 'RATE_LIMITED', message: 'slow down' });
+    expect(calls).toBe(1);
   });
 });
